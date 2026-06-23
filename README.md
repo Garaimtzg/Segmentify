@@ -255,11 +255,24 @@ clasifica cada clúster por si es *reciente* (Recency ≤ mediana) y *valioso*
 
 ## 🧪 Desarrollo
 
+Tres comandos para mantener la calidad del código mientras se desarrolla:
+
 ```bash
-make lint           # ruff check
-make test           # pytest
-make format         # ruff format
+make lint     # Revisa el código SIN modificarlo: busca errores, imports sin usar,
+              # variables muertas y estilo inconsistente (con ruff). Falla si algo
+              # no cumple las reglas de pyproject.toml. Úsalo antes de commitear.
+
+make test     # Ejecuta la batería de tests con pytest (carpeta tests/) y comprueba
+              # que ETL, RFM, selección de K, clustering y personas siguen dando los
+              # resultados esperados. Es la red de seguridad ante cambios.
+
+make format   # Reformatea automáticamente el código al estilo del proyecto
+              # (sangrías, comillas, longitud de línea...). A diferencia de `lint`,
+              # este SÍ reescribe los ficheros.
 ```
+
+> Regla del proyecto: antes de cerrar cualquier cambio, `make lint` y `make test`
+> deben pasar en verde.
 
 - Código en `src/segmentation/`, tests en `tests/`.
 - Cada módulo expone **funciones puras y testeables**; el I/O vive en `etl/load`.
