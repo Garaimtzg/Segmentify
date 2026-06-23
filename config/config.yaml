@@ -38,9 +38,21 @@ rfm:
 model:
   # Range of K to sweep for Elbow + silhouette.
   k_range: [2, 3, 4, 5, 6, 7, 8, 9, 10]
-  # Chosen K. If null -> selection stage picks it (best silhouette / elbow).
-  chosen_k: null
+  # Chosen K. If null -> selection uses the silhouette-optimal K.
+  # Fixed to 4 on purpose: silhouette technically peaks at K=2, but that is a
+  # trivial "active vs lapsed" split. K=4 sits in the elbow region (the inertia
+  # drop flattens after ~4) and maps to the four business personas defined in
+  # Milestone 7 (Champions, Loyal, At-risk, Lost). See reports/figures/.
+  chosen_k: 4
   random_state: 42
   # Feature preprocessing before KMeans.
   log1p: true        # log1p transform to correct Frequency/Monetary skew
   standardize: true  # StandardScaler after log1p
+
+# Persona display names per RFM quadrant (recent/valuable). Used by the analysis
+# stage to map each cluster to a business-readable segment name.
+personas:
+  champions: "Campeones / VIP"      # recent + high value
+  promising: "Prometedores"         # recent + low value (new / growing)
+  at_risk: "En riesgo"              # not recent + high value (valuable, slipping)
+  lost: "Dormidos / Perdidos"       # not recent + low value

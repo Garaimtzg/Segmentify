@@ -1,7 +1,11 @@
 # Customer Segmentation — orchestration targets
 # Target platform: Linux (see README for venv setup).
 
-PYTHON := python3
+# Interpreter used to create the venv. Override if needed, e.g.
+#   make install PYTHON=python3.11
+# Ubuntu 26.04 ships Python 3.14 as `python3`, which lacks wheels for the pinned
+# stack, so we default to 3.12.
+PYTHON ?= python3.12
 VENV   := .venv
 BIN    := $(VENV)/bin
 PY     := $(BIN)/python
