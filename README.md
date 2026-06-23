@@ -53,27 +53,133 @@ PC2 18.7%), así que el scatter 2D es una representación muy fiel:
 
 ![Segmentos en espacio PCA](docs/img/pca_2d.png)
 
+### ¿Por qué cada cliente es de un segmento?
+
+El nombre no se asigna a mano: sale de **comparar el RFM medio de cada clúster
+con la mediana de todos los clústeres** en dos ejes (regla *data-driven*):
+
+- **¿Reciente?** → Recency por debajo de la mediana (~**45 días**) = ha comprado
+  hace poco.
+- **¿Valioso?** → Monetary por encima de la mediana (~**£1 170**) = gasta mucho.
+
+El cruce de esos dos ejes da los 4 cuadrantes clásicos del RFM:
+
+| Segmento | ¿Reciente? | ¿Valioso? | Lo que dicen sus números |
+|---|:--:|:--:|---|
+| 🏆 Campeones / VIP | ✅ (R=12.5) | ✅ (M=£8 037) | compran hace nada, muy a menudo (F=13.7) y carísimo |
+| ⚠️ En riesgo | ❌ (R=69.1) | ✅ (M=£1 813) | gastaban bien (F=4.1) pero llevan ~2 meses sin volver |
+| 🌱 Prometedores | ✅ (R=20.6) | ❌ (M=£527) | recientes pero compran poco (F=2.0) y barato |
+| 💤 Dormidos / Perdidos | ❌ (R=187.7) | ❌ (M=£352) | ~6 meses inactivos, 1 sola compra de bajo valor |
+
 ### Interpretación de negocio y acciones
 
-- **🏆 Campeones / VIP** (16.6%) — Compran muy recientemente, con altísima
-  frecuencia y gasto (£8k de media). Son el motor de ingresos.
+- **🏆 Campeones / VIP** (16.6%) — *Recientes + valiosos.* Son los mejores
+  clientes y el motor de ingresos: compran muy recientemente (12.5 días), con
+  altísima frecuencia (13.7 compras) y gasto (£8k de media).
   *Acción:* fidelización premium, acceso anticipado, programa VIP. No malgastar
   descuentos: ya compran.
 
-- **⚠️ En riesgo** (26.8%) — Históricamente valiosos (£1.8k, ~4 compras) pero
-  llevan ~2 meses sin volver.
+- **⚠️ En riesgo** (26.8%) — *Valiosos pero NO recientes.* Eran buenos clientes
+  (£1.8k, ~4 compras) pero llevan ~2 meses sin volver: están enfriándose.
   *Acción:* campañas de reactivación personalizadas y recordatorios **antes** de
   perderlos; es el grupo con mayor retorno por euro invertido.
 
-- **🌱 Prometedores** (20.2%) — Recientes pero de baja frecuencia y ticket
-  (£527). Clientes nuevos o en desarrollo.
+- **🌱 Prometedores** (20.2%) — *Recientes pero de bajo valor.* Han comprado
+  hace poco pero solo una o dos veces y barato (£527). Son nuevos o en
+  desarrollo.
   *Acción:* onboarding, cross-sell e incentivar la **segunda compra** para
   convertirlos en leales.
 
-- **💤 Dormidos / Perdidos** (36.4%) — ~6 meses inactivos, una sola compra de
-  bajo valor. Es el grupo más grande.
+- **💤 Dormidos / Perdidos** (36.4%) — *NI recientes NI valiosos.* ~6 meses
+  inactivos, una sola compra de bajo valor. Es el grupo más grande.
   *Acción:* campañas *win-back* de bajo coste; asumir que muchos no volverán y
   no sobreinvertir presupuesto.
+
+---
+
+## 🤖 Cómo funciona el Machine Learning
+
+El núcleo es un pipeline de **aprendizaje no supervisado**: no existen etiquetas
+("este cliente es VIP") de antemano; el algoritmo **descubre** los grupos a
+partir de los datos. El flujo completo es:
+
+```
+RFM por cliente ──▶ escalado (log1p + StandardScaler) ──▶ K-Means (K=4)
+                                                              │
+                              PCA (solo para dibujar) ◀───────┤
+                                                              ▼
+                                                   clúster ──▶ persona
+```
+
+### 1. Las características: la matriz RFM
+
+Cada cliente se resume en un vector de 3 números: **Recency** (días desde la
+última compra), **Frequency** (nº de facturas distintas) y **Monetary** (gasto
+total). Es el "ADN" de comportamiento sobre el que trabaja todo lo demás.
+
+### 2. Escalado: preparar los datos para el algoritmo
+
+K-Means agrupa midiendo **distancias** entre clientes, y eso obliga a dos
+correcciones (módulo [`models/selection.py`](src/segmentation/models/selection.py)):
+
+- **`log1p` (logaritmo) — corrige el sesgo.** Frequency y Monetary están muy
+  sesgadas: casi todos compran poco y unos pocos compran muchísimo (hasta
+  £280k). Sin tratarlo, esos pocos *outliers* dominarían la distancia.
+  `log1p(x) = log(1+x)` comprime la cola larga y acerca la distribución a una
+  forma normal.
+- **`StandardScaler` — pone todo en la misma escala.** Recency va de 1 a 374
+  (días) y Monetary llega a cientos de miles (£). Sin normalizar, Monetary
+  "pesaría" muchísimo más que Recency solo por su magnitud. El scaler resta la
+  media y divide por la desviación, dejando cada variable con **media 0 y
+  desviación 1**, de modo que las tres cuentan por igual.
+
+Ambos pasos son configurables (`model.log1p`, `model.standardize`).
+
+### 3. K-Means: formar los grupos
+
+K-Means parte el conjunto en **K grupos** minimizando la **inercia** (suma de
+las distancias al cuadrado de cada cliente a su centroide). Itera: asigna cada
+punto al centroide más cercano → recalcula los centroides → repite hasta que se
+estabiliza. Para que el resultado sea **reproducible y robusto**:
+
+- `random_state` fijo (semilla de `config.yaml`) → siempre el mismo resultado.
+- `n_init=10` → lo ejecuta 10 veces con arranques distintos y se queda con el
+  mejor, evitando "mínimos locales" malos.
+
+### 4. ¿Cuántos grupos? Elegir K
+
+K-Means no decide K solo: hay que dárselo. Se barre K=2..10
+([`make train`](src/segmentation/cli.py)) y se miran dos métricas:
+
+| ![Elbow](docs/img/elbow.png) | ![Silhouette](docs/img/silhouette.png) |
+|:--:|:--:|
+
+- **Codo (Elbow / inercia):** la inercia siempre baja al subir K. Se busca el
+  "codo": el punto donde añadir más clústeres ya **no** reduce mucho el error.
+- **Silhouette:** mide si cada cliente está bien dentro de su grupo y lejos del
+  vecino (de −1 a 1; cuanto más alto, mejor separación).
+
+El silhouette tiene su máximo en **K=2** (0.43), pero ese corte solo separa
+"activos vs. inactivos" — demasiado pobre para accionar marketing. Se elige
+**K=4** porque (a) está en la zona del codo, (b) las cuatro personas resultantes
+son interpretables y accionables. Queda fijado en `config.yaml`
+(`model.chosen_k: 4`) y el log siempre reporta también el pico de silhouette por
+transparencia.
+
+### 5. PCA: solo para poder dibujarlo
+
+Los clientes viven en **3 dimensiones** (R, F, M). Para visualizarlos en un
+plano, **PCA** las comprime a 2 ejes que conservan la mayor variación posible.
+> ⚠️ PCA se usa **únicamente para la figura**: K-Means agrupa con las 3 features
+> reales, no con las 2 de PCA. Como las 2 primeras componentes retienen el
+> **93.8%** de la varianza, el scatter 2D es una representación muy fiel.
+
+### 6. De clúster a persona
+
+K-Means devuelve grupos anónimos (0, 1, 2, 3). El paso final
+([`analysis/personas.py`](src/segmentation/analysis/personas.py)) les pone un
+nombre de negocio con la regla de cuadrantes RFM explicada
+[arriba](#por-qué-cada-cliente-es-de-un-segmento).
 
 ---
 
@@ -232,24 +338,13 @@ Nada está hardcodeado. Lo más relevante:
   silhouette.
 - `personas` — nombres de los segmentos por cuadrante RFM.
 
-### Elección de K
+### Elección de K y asignación de personas
 
-El barrido reporta inercia (Elbow) y silhouette para K=2..10:
-
-| ![Elbow](docs/img/elbow.png) | ![Silhouette](docs/img/silhouette.png) |
-|:--:|:--:|
-
-El silhouette tiene su máximo técnico en **K=2** (0.43), pero es un corte
-trivial *activos vs. inactivos*, inútil para segmentar. Se fija **K=4** porque:
-
-1. **Codo:** la caída de inercia se aplana a partir de ~4.
-2. **Interpretabilidad:** K=4 mapea a las 4 personas de negocio.
-3. **Trazabilidad:** queda documentado en `config.yaml`; el log siempre reporta
-   el pico de silhouette.
-
-Las personas se asignan de forma **data-driven** (sin IDs de clúster fijos): se
-clasifica cada clúster por si es *reciente* (Recency ≤ mediana) y *valioso*
-(Monetary ≥ mediana), dando los cuatro cuadrantes RFM.
+El detalle del barrido de K (codo + silhouette), del escalado y del PCA está en
+la sección [🤖 Cómo funciona el Machine Learning](#-cómo-funciona-el-machine-learning).
+En resumen: se fija **K=4** (`model.chosen_k`) por codo + interpretabilidad, y
+las personas se asignan de forma *data-driven* por cuadrante RFM (reciente ×
+valioso), sin IDs de clúster fijos.
 
 ---
 
